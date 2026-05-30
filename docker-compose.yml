@@ -1,0 +1,107 @@
+# Local development stack for the African Investment Hub backend.
+# Production uses Coolify with equivalent services (see PRD §15).
+#
+# An explicit project name isolates these containers from any other project
+# that also lives in a directory named "backend".
+name: aih
+
+services:
+  api:
+    build: .
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    env_file: .env
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./app:/app/app
+      - ./alembic:/app/alembic
+      # Mounted so the test suite can run via `docker compose run` (dev only).
+      - ./tests:/app/tests
+      - ./pyproject.toml:/app/pyproject.toml
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  worker:
+    build: .
+    command: arq app.workers.worker.WorkerSettings
+    env_file: .env
+    volumes:
+      - ./app:/app/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-aih}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aih_password}
+      POSTGRES_DB: ${POSTGRES_DB:-aih}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    # Not published to the host by default (safer, avoids port clashes). Add a
+    # docker-compose.override.yml mapping "5433:5432" if you need host access.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-aih} -d ${POSTGRES_DB:-aih}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    environment:
+      DB_HOST: postgres
+      DB_USER: ${POSTGRES_USER:-aih}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-aih_password}
+      DB_NAME: ${POSTGRES_DB:-aih}
+      LISTEN_PORT: 6432
+      POOL_MODE: transaction
+      AUTH_TYPE: scram-sha-256
+      MAX_CLIENT_CONN: "1000"
+      DEFAULT_POOL_SIZE: "25"
+    # Internal only — the api/worker connect via the "pgbouncer" hostname.
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --save 3600 1 --appendonly no
+    volumes:
+      - redis_data:/data
+    # Not published to the host by default (avoids local Redis port clashes).
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Self-hosted LLM tracing (PRD §8.4). Optional locally — comment out if not needed.
+  langfuse:
+    image: langfuse/langfuse:2
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-aih}:${POSTGRES_PASSWORD:-aih_password}@postgres:5432/langfuse
+      NEXTAUTH_SECRET: ${SECRET_KEY:-change-me}
+      NEXTAUTH_URL: http://localhost:3001
+      SALT: ${SECRET_KEY:-change-me}
+      TELEMETRY_ENABLED: "false"
+    ports:
+      - "3001:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  redis_data:
