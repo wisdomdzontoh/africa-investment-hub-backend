@@ -66,4 +66,9 @@ async def update_homepage(
     await audit_service.record(
         db, actor_user_id=admin.id, action="cms.homepage_saved", target_type="homepage_content"
     )
+    # Drop the public cache so edits go live immediately.
+    from app.api.v1.content import HOMEPAGE_CACHE_KEY
+    from app.core.redis import get_redis
+
+    await get_redis().delete(HOMEPAGE_CACHE_KEY)
     return HomepageContentOut.model_validate(content)

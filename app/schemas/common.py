@@ -16,11 +16,16 @@ class ORMModel(BaseModel):
 
 
 class Page(BaseModel, Generic[T]):
-    """Cursor-paginated envelope (PRD §11)."""
+    """Cursor-paginated envelope (PRD §11).
+
+    ``total`` is populated only by endpoints that support offset paging
+    (numbered pages on the public site); cursor consumers ignore it.
+    """
 
     items: list[T]
     next_cursor: str | None = None
     has_more: bool = False
+    total: int | None = None
 
 
 class MessageResponse(BaseModel):

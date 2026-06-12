@@ -38,7 +38,7 @@ class ProjectBase(BaseModel):
 
 
 class ProjectCreate(ProjectBase):
-    """Owner submission. ``full_description`` accepted but never shown publicly."""
+    """Facilitator submission. ``full_description`` accepted but never shown publicly."""
 
 
 class ProjectUpdate(BaseModel):

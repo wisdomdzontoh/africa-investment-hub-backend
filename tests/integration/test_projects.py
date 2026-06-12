@@ -156,6 +156,83 @@ async def test_investor_cannot_submit_project(client, make_user, auth_as) -> Non
     assert resp.status_code == 403
 
 
+async def test_offset_paging_returns_total(client, db, make_user) -> None:
+    owner = await make_user(role=UserRole.project_owner)
+    for _ in range(3):
+        await _make_project(db, owner=owner, status=ProjectStatus.approved)
+    await _make_project(db, owner=owner, status=ProjectStatus.pending)
+
+    resp = await client.get("/v1/projects?page=1&limit=2")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["total"] == 3
+    assert len(body["items"]) == 2
+    assert body["has_more"] is True
+
+    resp = await client.get("/v1/projects?page=2&limit=2")
+    body = resp.json()
+    assert len(body["items"]) == 1
+    assert body["has_more"] is False
+
+
+async def test_featured_filter_and_funding_sort(client, db, make_user) -> None:
+    owner = await make_user(role=UserRole.project_owner)
+    small = await _make_project(db, owner=owner)
+    small.funding_required = Decimal("1000000")
+    big = await _make_project(db, owner=owner)
+    big.funding_required = Decimal("9000000")
+    big.is_featured = True
+    await db.commit()
+
+    resp = await client.get("/v1/projects?featured=true")
+    items = resp.json()["items"]
+    assert [i["id"] for i in items] == [str(big.id)]
+
+    resp = await client.get("/v1/projects?sort=funding_asc")
+    items = resp.json()["items"]
+    assert [i["id"] for i in items] == [str(small.id), str(big.id)]
+
+
+async def test_owner_detail_returns_status_and_documents(client, db, make_user, auth_as) -> None:
+    owner = await make_user(role=UserRole.project_owner)
+    project = await _make_project(db, owner=owner, status=ProjectStatus.pending)
+
+    auth_as(owner)
+    resp = await client.get(f"/v1/projects/mine/{project.id}")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "pending"
+    assert body["documents"] == []
+    # Owner sees their own gated fields in full.
+    assert body["full_description"] == "PRIVILEGED full description behind the NDA gate."
+
+
+async def test_owner_detail_forbidden_for_others(client, db, make_user, auth_as) -> None:
+    owner_a = await make_user(role=UserRole.project_owner)
+    owner_b = await make_user(role=UserRole.project_owner)
+    project = await _make_project(db, owner=owner_a)
+
+    auth_as(owner_b)
+    resp = await client.get(f"/v1/projects/mine/{project.id}")
+    assert resp.status_code == 403
+
+
+async def test_owner_can_update_own_project(client, db, make_user, auth_as) -> None:
+    owner = await make_user(role=UserRole.project_owner)
+    project = await _make_project(db, owner=owner, status=ProjectStatus.pending)
+
+    auth_as(owner)
+    resp = await client.patch(
+        f"/v1/projects/{project.id}",
+        json={"title": "Solar Farm Ghana — Phase II", "expected_roi_min": "12.5"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["title"] == "Solar Farm Ghana — Phase II"
+    # Numeric(…, 2) pads the scale — compare numerically, not textually.
+    assert Decimal(body["expected_roi_min"]) == Decimal("12.5")
+
+
 async def test_owner_cannot_edit_others_project(client, db, make_user, auth_as) -> None:
     owner_a = await make_user(role=UserRole.project_owner)
     owner_b = await make_user(role=UserRole.project_owner)

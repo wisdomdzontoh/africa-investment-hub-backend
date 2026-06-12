@@ -1,9 +1,13 @@
 # ─────────────────────────── Builder ───────────────────────────
 FROM python:3.12-slim AS builder
 
+# Generous pip timeout/retries: the default 15s timeout turns transient
+# Docker Desktop DNS/network hiccups into hard "Read timed out" build failures.
 ENV PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    PYTHONDONTWRITEBYTECODE=1
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_DEFAULT_TIMEOUT=120 \
+    PIP_RETRIES=10
 
 WORKDIR /app
 

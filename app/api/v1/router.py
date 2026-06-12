@@ -12,6 +12,7 @@ from app.api.v1 import (
     account,
     ai,
     contact,
+    content,
     countries,
     health,
     investors,
@@ -34,6 +35,7 @@ api_router = APIRouter(prefix="/v1")
 api_router.include_router(investors.router)
 api_router.include_router(projects.router)
 api_router.include_router(countries.router)
+api_router.include_router(content.router)
 api_router.include_router(ai.router)
 api_router.include_router(contact.router)
 api_router.include_router(account.router)

@@ -25,7 +25,11 @@ class UserOut(ORMModel):
 
 
 class AccountRoleSet(BaseModel):
-    """Onboarding role selection — investor or project owner only."""
+    """Onboarding role selection — investor or project facilitator only.
+
+    The wire/DB enum value remains ``project_owner`` (stable identifier);
+    user-facing surfaces render it as "Project Facilitator".
+    """
 
     role: UserRole = Field(description="Platform role chosen during onboarding.")
 

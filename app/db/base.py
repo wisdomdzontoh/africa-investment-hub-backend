@@ -22,6 +22,12 @@ NAMING_CONVENTION = {
 class Base(DeclarativeBase):
     metadata = MetaData(naming_convention=NAMING_CONVENTION)
 
+    # Fetch server-generated values (``updated_at`` onupdate) via RETURNING on
+    # the same statement. Without this, flushes leave those columns expired and
+    # the next attribute access (e.g. pydantic serialisation) triggers a lazy
+    # load outside the async greenlet → MissingGreenlet 500s on every PATCH.
+    __mapper_args__ = {"eager_defaults": True}
+
 
 class UUIDPrimaryKeyMixin:
     id: Mapped[uuid.UUID] = mapped_column(

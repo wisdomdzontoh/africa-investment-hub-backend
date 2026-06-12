@@ -99,15 +99,29 @@ async def send_template(
     await send_email(to=to, subject=subject, html=html)
 
 
-async def send_contact_form(*, name: str, email: str, message: str) -> None:
-    """Route a public contact-form submission to the admin inbox (PRD §6.1)."""
-    html = (
-        f"<p><strong>From:</strong> {name} &lt;{email}&gt;</p>"
-        f"<p><strong>Message:</strong></p><p>{message}</p>"
-    )
+async def send_contact_form(
+    *,
+    name: str,
+    email: str,
+    message: str,
+    company: str | None = None,
+    subject: str | None = None,
+) -> None:
+    """Route a public contact-form submission to the admin inbox (PRD §6.1).
+
+    All fields are attacker-controlled — escape before embedding in HTML.
+    """
+    from html import escape
+
+    parts = [f"<p><strong>From:</strong> {escape(name)} &lt;{escape(email)}&gt;</p>"]
+    if company:
+        parts.append(f"<p><strong>Company:</strong> {escape(company)}</p>")
+    if subject:
+        parts.append(f"<p><strong>Subject:</strong> {escape(subject)}</p>")
+    parts.append(f"<p><strong>Message:</strong></p><p>{escape(message)}</p>")
     await send_email(
         to=settings.EMAIL_ADMIN_INBOX,
-        subject=f"Contact form: {name}",
-        html=html,
+        subject=f"Contact form: {subject or name}",
+        html="".join(parts),
         reply_to=email,
     )

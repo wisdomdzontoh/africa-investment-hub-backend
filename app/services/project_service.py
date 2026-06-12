@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import Select, select
+from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import Pagination
@@ -50,6 +50,12 @@ def _apply_filters(stmt: Select[Any], f: ProjectFilters) -> Select[Any]:
         stmt = stmt.where(Project.project_stage == f["stage"])
     if f.get("funding_type"):
         stmt = stmt.where(Project.funding_type == f["funding_type"])
+    if f.get("min_roi") is not None:
+        stmt = stmt.where(Project.expected_roi_max >= Decimal(str(f["min_roi"])))
+    if f.get("max_roi") is not None:
+        stmt = stmt.where(Project.expected_roi_min <= Decimal(str(f["max_roi"])))
+    if f.get("featured"):
+        stmt = stmt.where(Project.is_featured.is_(True))
     return stmt
 
 
@@ -60,6 +66,14 @@ def _apply_sort(stmt: Select[Any], sort: str | None) -> Select[Any]:
         return stmt.order_by(Project.risk_level.asc().nullsfirst(), Project.id.desc())
     if sort == "most_viewed":
         return stmt.order_by(Project.view_count.desc(), Project.id.desc())
+    if sort == "funding_desc":
+        return stmt.order_by(Project.funding_required.desc(), Project.id.desc())
+    if sort == "funding_asc":
+        return stmt.order_by(Project.funding_required.asc(), Project.id.desc())
+    if sort == "featured":
+        return stmt.order_by(
+            Project.is_featured.desc(), Project.created_at.desc(), Project.id.desc()
+        )
     # Default: newest first.
     return stmt.order_by(Project.created_at.desc(), Project.id.desc())
 
@@ -77,6 +91,31 @@ async def list_public(
             stmt = stmt.where(Project.created_at < anchor.created_at)
     result = await db.execute(stmt)
     return list(result.scalars().all())
+
+
+async def list_public_offset(
+    db: AsyncSession,
+    *,
+    filters: ProjectFilters,
+    sort: str | None,
+    page_number: int,
+    page_size: int,
+) -> tuple[list[Project], int]:
+    """Offset-paginated public listing for numbered pagers (PRD §6.1).
+
+    Returns the page of rows plus the total filtered count, so the public site
+    can render "showing X–Y of Z" and page numbers without over-fetching.
+    """
+    base = select(Project).where(Project.status == ProjectStatus.approved)
+    base = _apply_filters(base, filters)
+
+    total = (
+        await db.execute(select(func.count()).select_from(base.subquery()))
+    ).scalar() or 0
+
+    stmt = _apply_sort(base, sort).offset((page_number - 1) * page_size).limit(page_size)
+    result = await db.execute(stmt)
+    return list(result.scalars().all()), total
 
 
 # ─────────────────────────── NDA gate ───────────────────────────

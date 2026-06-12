@@ -1,7 +1,7 @@
 """Project endpoints (PRD §6.3, §11).
 
 Public listing + detail (with the NDA gate applied in the service), plus
-project-owner submission and management.
+project-facilitator submission and management.
 """
 
 from __future__ import annotations
@@ -49,20 +49,46 @@ async def list_projects(
     country: Annotated[list[str] | None, Query()] = None,
     min_funding: Annotated[float | None, Query(ge=0)] = None,
     max_funding: Annotated[float | None, Query(ge=0)] = None,
+    min_roi: Annotated[float | None, Query()] = None,
+    max_roi: Annotated[float | None, Query()] = None,
     risk_level: Annotated[RiskLevel | None, Query()] = None,
     stage: Annotated[ProjectStage | None, Query()] = None,
     funding_type: Annotated[FundingType | None, Query()] = None,
-    sort: Annotated[str | None, Query(description="newest|highest_roi|lowest_risk|most_viewed")] = None,
+    featured: Annotated[bool | None, Query()] = None,
+    sort: Annotated[
+        str | None,
+        Query(
+            description="newest|highest_roi|lowest_risk|most_viewed|funding_desc|funding_asc|featured"
+        ),
+    ] = None,
+    page_number: Annotated[
+        int | None,
+        Query(alias="page", ge=1, description="1-based page for offset paging (adds `total`)"),
+    ] = None,
 ) -> Page[ProjectCard]:
     filters = {
         "sector": sector,
         "country": country,
         "min_funding": min_funding,
         "max_funding": max_funding,
+        "min_roi": min_roi,
+        "max_roi": max_roi,
         "risk_level": risk_level,
         "stage": stage,
         "funding_type": funding_type,
+        "featured": featured,
     }
+    if page_number is not None:
+        # Offset mode for the public site's numbered pager.
+        items, total = await project_service.list_public_offset(
+            db, filters=filters, sort=sort, page_number=page_number, page_size=page.limit
+        )
+        return Page[ProjectCard](
+            items=[ProjectCard.model_validate(p) for p in items],
+            has_more=page_number * page.limit < total,
+            total=total,
+        )
+
     rows = await project_service.list_public(db, filters=filters, sort=sort, page=page)
     has_more = len(rows) > page.limit
     items = rows[: page.limit]
@@ -90,6 +116,15 @@ async def my_projects(db: DbDep, owner: OwnerUser, page: PaginationDep) -> Page[
         next_cursor=str(items[-1].id) if has_more and items else None,
         has_more=has_more,
     )
+
+
+@router.get("/mine/{project_id}", response_model=ProjectOwnerOut)
+async def my_project_detail(
+    project_id: uuid.UUID, db: DbDep, owner: OwnerUser
+) -> ProjectOwnerOut:
+    """Owner's full view of their own project — any status, with documents."""
+    project = await project_service.get_owned_or_404(db, project_id=project_id, owner_id=owner.id)
+    return ProjectOwnerOut.model_validate(project)
 
 
 @router.get("/{project_id}", response_model=ProjectDetail)

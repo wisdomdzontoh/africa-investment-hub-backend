@@ -15,16 +15,22 @@ router = APIRouter(tags=["contact"])
 class ContactForm(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     email: EmailStr
+    company: str | None = Field(default=None, max_length=200)
+    subject: str | None = Field(default=None, max_length=200)
     message: str = Field(min_length=1, max_length=5000)
 
 
 @router.post(
     "/contact",
     response_model=MessageResponse,
-    dependencies=[Depends(rate_limit(RateTier.public))],
+    dependencies=[Depends(rate_limit(RateTier.auth))],
 )
 async def submit_contact(form: ContactForm) -> MessageResponse:
     await email_service.send_contact_form(
-        name=form.name, email=form.email, message=form.message
+        name=form.name,
+        email=form.email,
+        message=form.message,
+        company=form.company,
+        subject=form.subject,
     )
     return MessageResponse(message="Thank you — we'll be in touch shortly.")

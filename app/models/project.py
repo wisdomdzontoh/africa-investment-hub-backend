@@ -6,7 +6,7 @@ import uuid
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import Boolean, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import Boolean, ForeignKey, Index, Integer, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -22,6 +22,17 @@ if TYPE_CHECKING:
 
 class Project(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "projects"
+
+    # Composite indexes for the public catalogue: every listing query filters
+    # on status, then sorts by one of these columns (PRD §6.1; BE-01).
+    # Low-cardinality enum filters (stage, funding_type, risk) ride the status
+    # index — dedicated b-trees on them would rarely be chosen by the planner.
+    __table_args__ = (
+        Index("ix_projects_status_created_at", "status", "created_at"),
+        Index("ix_projects_status_funding_required", "status", "funding_required"),
+        Index("ix_projects_status_expected_roi_max", "status", "expected_roi_max"),
+        Index("ix_projects_status_view_count", "status", "view_count"),
+    )
 
     owner_user_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
