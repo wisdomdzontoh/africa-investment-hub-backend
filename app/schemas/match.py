@@ -39,6 +39,12 @@ class MatchStatusUpdate(BaseModel):
     status: MatchStatus
 
 
+class ConfidentialUpdate(BaseModel):
+    """Investor toggles confidential engagement before a facilitator intro."""
+
+    confidential: bool
+
+
 class NotificationOut(ORMModel):
     id: uuid.UUID
     type: str

@@ -23,7 +23,7 @@ from app.schemas.common import (
     PresignUploadResponse,
 )
 from app.schemas.investor import InvestorOut, InvestorRegister, InvestorUpdate
-from app.schemas.match import MatchOut, NotificationOut, NotificationReadUpdate
+from app.schemas.match import MatchWithProject, NotificationOut, NotificationReadUpdate
 from app.services import investor_service, notification_service, storage
 
 router = APIRouter(prefix="/investors", tags=["investors"])
@@ -62,14 +62,16 @@ async def update_me(payload: InvestorUpdate, db: DbDep, user: InvestorUser) -> I
     return InvestorOut.model_validate(updated)
 
 
-@router.get("/me/matches", response_model=Page[MatchOut])
-async def my_matches(db: DbDep, user: InvestorUser, page: PaginationDep) -> Page[MatchOut]:
+@router.get("/me/matches", response_model=Page[MatchWithProject])
+async def my_matches(
+    db: DbDep, user: InvestorUser, page: PaginationDep
+) -> Page[MatchWithProject]:
     profile = await _own_profile(db, user)
     rows = await investor_service.list_matches(db, investor_id=profile.id, page=page)
     has_more = len(rows) > page.limit
     items = rows[: page.limit]
-    return Page[MatchOut](
-        items=[MatchOut.model_validate(m) for m in items],
+    return Page[MatchWithProject](
+        items=[MatchWithProject.model_validate(m) for m in items],
         next_cursor=str(items[-1].id) if has_more and items else None,
         has_more=has_more,
     )

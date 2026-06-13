@@ -16,6 +16,7 @@ from app.api.v1 import (
     countries,
     health,
     investors,
+    matches,
     phase2,
     projects,
     webhooks,
@@ -33,6 +34,7 @@ root_router.include_router(health.router)
 # Versioned router (mounted under /v1).
 api_router = APIRouter(prefix="/v1")
 api_router.include_router(investors.router)
+api_router.include_router(matches.router)
 api_router.include_router(projects.router)
 api_router.include_router(countries.router)
 api_router.include_router(content.router)

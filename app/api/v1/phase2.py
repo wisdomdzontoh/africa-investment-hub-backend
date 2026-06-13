@@ -25,17 +25,10 @@ def _guard() -> None:
     )
 
 
-# ── Matches: interest / dismiss / deal-room / DD / confidential ──
-@router.post("/matches/{match_id}/interest")
-async def express_interest(match_id: uuid.UUID) -> None:
-    _guard()
-
-
-@router.post("/matches/{match_id}/dismiss")
-async def dismiss_match(match_id: uuid.UUID) -> None:
-    _guard()
-
-
+# ── Matches: deal-room / DD ──
+# NOTE: interest / dismiss / confidential are implemented and live in
+# `matches.py` (P2-02/03). What remains here is the deal room (P2-04) and the
+# due-diligence request (P2-05), still pending.
 @router.get("/matches/{match_id}/deal-room")
 async def deal_room(match_id: uuid.UUID) -> None:
     _guard()
@@ -43,11 +36,6 @@ async def deal_room(match_id: uuid.UUID) -> None:
 
 @router.post("/matches/{match_id}/due-diligence")
 async def request_due_diligence(match_id: uuid.UUID) -> None:
-    _guard()
-
-
-@router.patch("/matches/{match_id}/confidential")
-async def toggle_confidential(match_id: uuid.UUID) -> None:
     _guard()
 
 

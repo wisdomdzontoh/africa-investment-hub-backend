@@ -88,12 +88,17 @@ async def list_matches(
 
     AI-only matches (``ai_recommended``) are hidden until an admin reviews them.
     """
+    from sqlalchemy.orm import selectinload
+
     from app.models.enums import MatchStatus
 
     hidden = {MatchStatus.ai_recommended, MatchStatus.dismissed}
     stmt = (
         select(Match)
         .where(Match.investor_id == investor_id, Match.status.not_in(hidden))
+        # Eager-load the project so MatchWithProject serialises without a
+        # lazy load outside the async context.
+        .options(selectinload(Match.project))
         .order_by(Match.score.desc().nullslast(), Match.id.desc())
         .limit(page.limit + 1)
     )

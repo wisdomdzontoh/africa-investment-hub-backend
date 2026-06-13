@@ -24,6 +24,60 @@ async def get_or_404(db: AsyncSession, match_id: uuid.UUID) -> Match:
     return match
 
 
+# Investor-driven transitions (PRD §6.7, §12.3). An investor may act on a match
+# only while it is visible to them and before the deal moves into the brokered
+# NDA stages — past that, the admin/legal flow owns the status.
+_INTEREST_ALLOWED_FROM = frozenset(
+    {MatchStatus.admin_reviewed, MatchStatus.investor_notified}
+)
+_DISMISS_ALLOWED_FROM = frozenset(
+    {
+        MatchStatus.admin_reviewed,
+        MatchStatus.investor_notified,
+        MatchStatus.investor_interested,
+    }
+)
+_CONFIDENTIAL_ALLOWED_FROM = _DISMISS_ALLOWED_FROM
+
+
+async def get_owned_or_403(
+    db: AsyncSession, *, match_id: uuid.UUID, investor_id: uuid.UUID
+) -> Match:
+    """Fetch a match, 404 if missing, 403 if it isn't this investor's."""
+    from app.core.exceptions import ForbiddenError
+
+    match = await get_or_404(db, match_id)
+    if match.investor_id != investor_id:
+        raise ForbiddenError("This match does not belong to you.")
+    return match
+
+
+async def express_interest(db: AsyncSession, *, match: Match) -> Match:
+    if match.status not in _INTEREST_ALLOWED_FROM:
+        raise ConflictError("Interest can't be registered for this match right now.")
+    match.status = MatchStatus.investor_interested
+    if match.investor_interest_at is None:
+        match.investor_interest_at = datetime.now(UTC)
+    await db.flush()
+    return match
+
+
+async def dismiss(db: AsyncSession, *, match: Match) -> Match:
+    if match.status not in _DISMISS_ALLOWED_FROM:
+        raise ConflictError("This match can no longer be dismissed.")
+    match.status = MatchStatus.dismissed
+    await db.flush()
+    return match
+
+
+async def set_confidential(db: AsyncSession, *, match: Match, value: bool) -> Match:
+    if match.status not in _CONFIDENTIAL_ALLOWED_FROM:
+        raise ConflictError("Confidential mode can't be changed at this stage.")
+    match.is_confidential = value
+    await db.flush()
+    return match
+
+
 async def create_manual(
     db: AsyncSession, *, investor_id: uuid.UUID, project_id: uuid.UUID, explanation: str | None
 ) -> Match:
