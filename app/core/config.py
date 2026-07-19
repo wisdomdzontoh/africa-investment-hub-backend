@@ -45,6 +45,9 @@ class Settings(BaseSettings):
     POSTGRES_DB: str = "aih"
     POSTGRES_DIRECT_HOST: str | None = None
     POSTGRES_DIRECT_PORT: int | None = None
+    # Require TLS on every DB connection (managed Postgres: Neon, RDS, …).
+    # asyncpg's default is "prefer", which silently falls back to plaintext.
+    POSTGRES_SSL: bool = False
     DB_POOL_SIZE: int = 10
     DB_MAX_OVERFLOW: int = 20
     DB_ECHO: bool = False
@@ -128,6 +131,7 @@ class Settings(BaseSettings):
                 host=host,
                 port=port,
                 path=self.POSTGRES_DB,
+                query="ssl=require" if self.POSTGRES_SSL else None,
             )
         )
 

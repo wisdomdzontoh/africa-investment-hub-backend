@@ -1,0 +1,140 @@
+# Render Blueprint for the African Investment Hub backend:
+#   aih-api    — FastAPI web service (Docker), runs Alembic migrations on boot
+#   aih-worker — ARQ background worker (emails, embeddings, Clerk sync crons)
+#   aih-redis  — managed Key Value (rate limiting, caches, ARQ queue)
+# PostgreSQL lives on Neon (external): the POSTGRES_* values are prompted for
+# in the dashboard when the blueprint is created (sync: false).
+#
+# Deploy: Render Dashboard → New + → Blueprint → select this repo.
+# Full walkthrough: docs/DEPLOY_RENDER_NEON.md in the project docs.
+
+previews:
+  generation: off
+
+services:
+  # ── Redis ──────────────────────────────────────────────────────────────
+  - type: keyvalue
+    name: aih-redis
+    plan: free # 25 MB, no persistence — upgrade before real traffic
+    region: frankfurt
+    ipAllowList: [] # internal-only access
+    maxmemoryPolicy: noeviction # queued ARQ jobs must never be evicted
+
+  # ── FastAPI web service ────────────────────────────────────────────────
+  - type: web
+    name: aih-api
+    runtime: docker
+    region: frankfurt
+    plan: starter # `free` works but spins down after 15 min idle
+    branch: main
+    healthCheckPath: /v1/health
+    # Migrations run first (against the direct, non-pooler Neon endpoint via
+    # POSTGRES_DIRECT_HOST), then the API starts. Render injects $PORT.
+    dockerCommand: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+    autoDeploy: true
+    envVars:
+      - fromGroup: aih-backend
+      - key: REDIS_HOST
+        fromService:
+          type: keyvalue
+          name: aih-redis
+          property: host
+      - key: REDIS_PORT
+        fromService:
+          type: keyvalue
+          name: aih-redis
+          property: port
+
+  # ── ARQ background worker ──────────────────────────────────────────────
+  - type: worker
+    name: aih-worker
+    runtime: docker
+    region: frankfurt
+    plan: starter # background workers have no free instance type
+    branch: main
+    dockerCommand: arq app.workers.worker.WorkerSettings
+    autoDeploy: true
+    envVars:
+      - fromGroup: aih-backend
+      - key: REDIS_HOST
+        fromService:
+          type: keyvalue
+          name: aih-redis
+          property: host
+      - key: REDIS_PORT
+        fromService:
+          type: keyvalue
+          name: aih-redis
+          property: port
+
+envVarGroups:
+  - name: aih-backend
+    envVars:
+      # ── App ──
+      - key: ENVIRONMENT
+        value: production
+      - key: DEBUG
+        value: "false"
+      - key: LOG_LEVEL
+        value: INFO
+      - key: ENABLE_DOCS
+        value: "false"
+      - key: CORS_ORIGINS
+        sync: false # comma-separated, e.g. https://your-app.vercel.app
+      - key: SECRET_KEY
+        generateValue: true
+      # ── Neon PostgreSQL ──
+      - key: POSTGRES_HOST
+        sync: false # POOLED endpoint: ep-xxx-pooler.<region>.aws.neon.tech
+      - key: POSTGRES_PORT
+        value: "5432"
+      - key: POSTGRES_USER
+        sync: false
+      - key: POSTGRES_PASSWORD
+        sync: false
+      - key: POSTGRES_DB
+        sync: false
+      - key: POSTGRES_DIRECT_HOST
+        sync: false # DIRECT endpoint (no "-pooler") — used by Alembic DDL
+      - key: POSTGRES_DIRECT_PORT
+        value: "5432"
+      - key: POSTGRES_SSL
+        value: "true"
+      - key: DB_POOL_SIZE
+        value: "5"
+      - key: DB_MAX_OVERFLOW
+        value: "10"
+      # ── Field-level encryption (AES-256-GCM) ──
+      # python -c "import os,base64;print(base64.urlsafe_b64encode(os.urandom(32)).decode())"
+      - key: FIELD_ENCRYPTION_KEY
+        sync: false
+      # ── Clerk ──
+      - key: CLERK_JWKS_URL
+        sync: false
+      - key: CLERK_ISSUER
+        sync: false
+      - key: CLERK_SECRET_KEY
+        sync: false
+      - key: CLERK_WEBHOOK_SECRET
+        sync: false
+      # ── OpenAI ──
+      - key: OPENAI_API_KEY
+        sync: false
+      # ── Cloudflare R2 ──
+      - key: R2_ACCOUNT_ID
+        sync: false
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: R2_BUCKET
+        sync: false
+      - key: R2_ENDPOINT
+        sync: false
+      # ── Resend ──
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      - key: EMAIL_ADMIN_INBOX
+        sync: false
