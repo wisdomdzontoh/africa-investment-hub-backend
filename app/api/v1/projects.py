@@ -12,21 +12,25 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query
 
 from app.api.deps import (
+    CurrentUser,
     DbDep,
     OptionalUser,
     PaginationDep,
     require_project_owner,
 )
 from app.core.config import settings
+from app.core.exceptions import ForbiddenError, NotFoundError
 from app.core.rate_limit import RateTier, rate_limit
-from app.models.enums import FundingType, ProjectStage, RiskLevel
+from app.models.enums import FundingType, ProjectStage, RiskLevel, UserRole
 from app.models.user import User
 from app.schemas.common import (
+    DocumentUrlResponse,
     MessageResponse,
     Page,
     PresignUploadRequest,
     PresignUploadResponse,
 )
+from app.schemas.match import FacilitatorMatchInvestor, FacilitatorMatchOut, MatchOut
 from app.schemas.project import (
     ProjectCard,
     ProjectCreate,
@@ -34,11 +38,36 @@ from app.schemas.project import (
     ProjectOwnerOut,
     ProjectUpdate,
 )
-from app.services import project_service, storage
+from app.services import investor_service, match_service, project_service, storage
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
 OwnerUser = Annotated[User, Depends(require_project_owner)]
+
+
+@router.post("/{project_id}/interest", response_model=MatchOut)
+async def express_project_interest(
+    project_id: uuid.UUID, db: DbDep, user: CurrentUser
+) -> MatchOut:
+    """Approved investor expresses interest in a listed project (PRD §6.5).
+
+    Creates (or advances) a match to ``investor_interested`` and notifies the
+    project facilitator and admins. Idempotent — repeat calls return the
+    current match unchanged."""
+    if user.role != UserRole.investor:
+        raise ForbiddenError("Only investors can express interest in a project.")
+    from app.models.enums import UserStatus
+
+    if user.status != UserStatus.approved:
+        raise ForbiddenError("Your account must be approved before expressing interest.")
+    profile = await investor_service.get_by_user(db, user.id)
+    if profile is None:
+        raise ForbiddenError("Complete your investor profile first.")
+
+    match = await match_service.express_interest_in_project(
+        db, investor=profile, investor_user=user, project_id=project_id
+    )
+    return MatchOut.model_validate(match)
 
 
 @router.get("", response_model=Page[ProjectCard], dependencies=[Depends(rate_limit(RateTier.public))])
@@ -118,6 +147,45 @@ async def my_projects(db: DbDep, owner: OwnerUser, page: PaginationDep) -> Page[
     )
 
 
+@router.get("/mine/matches", response_model=Page[FacilitatorMatchOut])
+async def my_project_matches(
+    db: DbDep, owner: OwnerUser, page: PaginationDep
+) -> Page[FacilitatorMatchOut]:
+    """Investor engagement across the facilitator's projects (PRD §6.9).
+
+    Confidential engagements appear with the investor identity withheld until
+    the investor authorises introduction."""
+    rows = await match_service.list_for_facilitator(db, owner_id=owner.id, page=page)
+    has_more = len(rows) > page.limit
+    items = rows[: page.limit]
+    out = [
+        FacilitatorMatchOut(
+            id=m.id,
+            project_id=p.id,
+            project_title=p.title,
+            status=m.status,
+            source=m.source,
+            is_confidential=m.is_confidential,
+            investor_interest_at=m.investor_interest_at,
+            created_at=m.created_at,
+            investor=(
+                None
+                if m.is_confidential
+                else FacilitatorMatchInvestor(
+                    company_name=i.company_name,
+                    country_of_registration=i.country_of_registration,
+                )
+            ),
+        )
+        for m, p, i in items
+    ]
+    return Page[FacilitatorMatchOut](
+        items=out,
+        next_cursor=str(items[-1][0].id) if has_more and items else None,
+        has_more=has_more,
+    )
+
+
 @router.get("/mine/{project_id}", response_model=ProjectOwnerOut)
 async def my_project_detail(
     project_id: uuid.UUID, db: DbDep, owner: OwnerUser
@@ -170,6 +238,22 @@ async def presign_project_document(
     return PresignUploadResponse(
         upload_url=url, r2_key=key, expires_in=settings.R2_PRESIGN_EXPIRY_SECONDS
     )
+
+
+@router.get("/{project_id}/documents/{r2_key:path}", response_model=DocumentUrlResponse)
+async def download_project_document(
+    project_id: uuid.UUID, r2_key: str, db: DbDep, user: CurrentUser
+) -> DocumentUrlResponse:
+    """Short-lived download URL for a project document — the owner or an admin."""
+    project = await project_service.get(db, project_id)
+    if project is None:
+        raise NotFoundError("Project not found.")
+    if user.role != UserRole.admin and project.owner_user_id != user.id:
+        raise ForbiddenError("You do not have access to this document.")
+    if not any(d.get("r2_key") == r2_key for d in project.documents):
+        raise NotFoundError("Document not found.")
+    url = storage.presign_get(r2_key, accessor_id=user.id)
+    return DocumentUrlResponse(url=url, expires_in=settings.R2_PRESIGN_EXPIRY_SECONDS)
 
 
 @router.delete("/{project_id}/documents/{r2_key:path}", response_model=MessageResponse)

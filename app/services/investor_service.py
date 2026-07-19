@@ -16,8 +16,11 @@ from app.models.investor import InvestorProfile
 from app.models.match import Match
 from app.models.user import User
 from app.schemas.investor import InvestorRegister, InvestorUpdate
-from app.services import email as email_service
 from app.workers.queue import enqueue
+
+
+async def get(db: AsyncSession, investor_id: uuid.UUID) -> InvestorProfile | None:
+    return await db.get(InvestorProfile, investor_id)
 
 
 async def get_by_user(db: AsyncSession, user_id: uuid.UUID) -> InvestorProfile | None:
@@ -62,8 +65,11 @@ async def register(
 
     await enqueue("embed_profile", str(profile.id))
     if user.email:
-        await email_service.send_template(
-            to=user.email, template="registration_received", locale=user.locale
+        await enqueue(
+            "send_templated_email",
+            to=user.email,
+            template="registration_received",
+            locale=user.locale.value,
         )
     return profile
 

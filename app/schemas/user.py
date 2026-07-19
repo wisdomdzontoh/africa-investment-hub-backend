@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
 
 from app.models.enums import Locale, UserRole, UserStatus
 from app.schemas.common import ORMModel
@@ -40,6 +40,12 @@ class UserRoleUpdate(BaseModel):
 
 class UserStatusUpdate(BaseModel):
     status: UserStatus
+
+
+class AdminInvite(BaseModel):
+    """Invite a new administrator by email (Clerk invitation, role baked in)."""
+
+    email: EmailStr
 
 
 class LocaleUpdate(BaseModel):

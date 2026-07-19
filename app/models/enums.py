@@ -60,6 +60,7 @@ class ProjectStatus(str, enum.Enum):
 class MatchSource(str, enum.Enum):
     ai_generated = "ai_generated"
     admin_manual = "admin_manual"
+    investor_initiated = "investor_initiated"  # investor expressed interest while browsing
 
 
 class MatchStatus(str, enum.Enum):

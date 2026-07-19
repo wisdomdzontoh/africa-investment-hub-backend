@@ -79,12 +79,35 @@ async def upsert_from_webhook(
     return user
 
 
-async def soft_delete_by_clerk_id(db: AsyncSession, clerk_id: str) -> None:
-    """Mark a user deleted in response to a Clerk ``user.deleted`` webhook."""
+async def soft_delete(db: AsyncSession, user: User) -> None:
+    """Deactivate a user and start the 30-day hard-delete clock (PRD §14).
+
+    Idempotent — re-deleting keeps the original ``deleted_at`` so the purge
+    window is never extended by repeated webhook deliveries."""
     from datetime import UTC, datetime
 
+    user.status = UserStatus.suspended
+    if user.deleted_at is None:
+        user.deleted_at = datetime.now(UTC)
+    await db.flush()
+
+
+async def soft_delete_by_clerk_id(db: AsyncSession, clerk_id: str) -> None:
+    """Mark a user deleted in response to a Clerk ``user.deleted`` webhook."""
     user = await get_by_clerk_id(db, clerk_id)
     if user is not None:
-        user.status = UserStatus.suspended
-        user.deleted_at = datetime.now(UTC)
-        await db.flush()
+        await soft_delete(db, user)
+
+
+async def list_soft_deleted(
+    db: AsyncSession, *, older_than_days: int | None = None
+) -> list[User]:
+    """Users pending hard deletion; optionally only those past the purge window."""
+    from datetime import UTC, datetime, timedelta
+
+    stmt = select(User).where(User.deleted_at.is_not(None))
+    if older_than_days is not None:
+        cutoff = datetime.now(UTC) - timedelta(days=older_than_days)
+        stmt = stmt.where(User.deleted_at < cutoff)
+    result = await db.execute(stmt)
+    return list(result.scalars().all())

@@ -6,6 +6,8 @@ import uuid
 from datetime import datetime
 from typing import Any
 
+from pydantic import BaseModel
+
 from app.schemas.common import ORMModel
 
 
@@ -36,9 +38,22 @@ class AuditLogOut(ORMModel):
         return super().model_validate(obj, **kwargs)
 
 
+class RiskAssessmentOut(BaseModel):
+    """AI risk assessment result (advisory). The admin sets the final
+    risk_level on approval; this never auto-applies."""
+
+    assessment: dict[str, Any] = {}
+    admin_notes: str | None = None
+
+
 class AnalyticsOverview(ORMModel):
     investors_by_status: dict[str, int] = {}
+    users_by_role: dict[str, int] = {}
     projects_by_status: dict[str, int] = {}
     projects_by_sector: dict[str, int] = {}
     matches_by_status: dict[str, int] = {}
     total_users: int = 0
+    total_matches: int = 0
+    # Mean AI compatibility score across all matches (0–1); a coarse signal of
+    # match quality for the admin dashboard (PRD §6.4, P2-09).
+    avg_match_score: float | None = None

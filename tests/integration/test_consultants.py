@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import pytest
-
-from app.models.enums import ConsultantStatus, UserRole, UserStatus
 from app.models.consultant import ConsultantProfile
+from app.models.enums import ConsultantStatus, UserRole, UserStatus
 
-pytestmark = pytest.mark.integration
+# The consultant feature is parked (DEC-3) and its router is unmounted in
+# app/api/v1/router.py, so these endpoints 404 by design. Unskip when revived.
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.skip(reason="Consultant feature parked (DEC-3); router unmounted."),
+]
 
 _PROFILE = {
     "full_name": "Ama Mensah",

@@ -23,7 +23,7 @@ from app.models.enums import (
 from app.models.investor import InvestorProfile
 from app.models.project import Project
 from app.models.user import User
-from app.services import audit_service, email as email_service, notification_service
+from app.services import audit_service, notification_service
 from app.workers.queue import enqueue
 
 
@@ -49,7 +49,12 @@ _STATUS_ACTIONS = {
 
 
 async def set_investor_status(
-    db: AsyncSession, *, investor_id: uuid.UUID, action: str, reason: str | None, actor_id: uuid.UUID
+    db: AsyncSession,
+    *,
+    investor_id: uuid.UUID,
+    action: str,
+    reason: str | None,
+    actor_id: uuid.UUID,
 ) -> InvestorProfile:
     if action not in _STATUS_ACTIONS:
         raise ValidationError(f"Unknown action: {action}")
@@ -73,8 +78,13 @@ async def set_investor_status(
         "request_info": "status_request_info",
     }.get(action)
     if template and user.email:
-        await email_service.send_template(
-            to=user.email, template=template, locale=user.locale, reason=reason or ""
+        # Queued (ARQ) so the admin action never waits on the email provider.
+        await enqueue(
+            "send_templated_email",
+            to=user.email,
+            template=template,
+            locale=user.locale.value,
+            reason=reason or "",
         )
     await notification_service.create(
         db,
@@ -154,19 +164,22 @@ async def set_project_status(
     )
     owner = await db.get(User, project.owner_user_id)
     if owner and owner.email and action in {"approve", "reject"}:
-        await email_service.send_template(
+        await enqueue(
+            "send_templated_email",
             to=owner.email,
             template="project_status",
-            locale=owner.locale,
+            locale=owner.locale.value,
             title=project.title,
             status=project.status.value,
             reason=reason or "",
         )
-    if action == "approve":
-        # Re-run matching against the new approved project, and suggest a risk
-        # assessment to admins (advisory only — PRD §12.5).
+    if action == "approve" and previous != ProjectStatus.approved:
+        # Re-run matching against the new approved project, suggest a risk
+        # assessment to admins (advisory only — PRD §12.5), and alert
+        # investors whose focus overlaps the new listing (PRD §6.5).
         await enqueue("embed_project", str(project.id))
         await enqueue("assess_project_risk", str(project.id))
+        await enqueue("notify_matching_investors", str(project.id))
     return project
 
 
@@ -284,9 +297,15 @@ async def list_users(db: AsyncSession, *, page: Pagination) -> list[User]:
     return list(result.scalars().all())
 
 
-async def count_by(db: AsyncSession, model: type, column: object) -> dict[str, int]:
-    """Simple group-by count helper for the analytics overview."""
+async def count_by(
+    db: AsyncSession, model: type, column: object, *, where: object | None = None
+) -> dict[str, int]:
+    """Simple group-by count helper for the analytics overview. ``where``
+    narrows the population (e.g. only users with the investor role)."""
     import enum
 
-    result = await db.execute(select(column, func.count()).group_by(column))
+    stmt = select(column, func.count()).group_by(column)
+    if where is not None:
+        stmt = stmt.where(where)
+    result = await db.execute(stmt)
     return {(k.value if isinstance(k, enum.Enum) else str(k)): v for k, v in result.all()}

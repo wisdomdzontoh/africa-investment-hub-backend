@@ -205,6 +205,10 @@ async def list_own(
     return list(result.scalars().all())
 
 
+async def get(db: AsyncSession, project_id: uuid.UUID) -> Project | None:
+    return await db.get(Project, project_id)
+
+
 async def get_owned_or_404(
     db: AsyncSession, *, project_id: uuid.UUID, owner_id: uuid.UUID
 ) -> Project:

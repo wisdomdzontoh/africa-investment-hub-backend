@@ -53,3 +53,10 @@ class PresignUploadResponse(BaseModel):
     r2_key: str
     expires_in: int
     method: str = "PUT"
+
+
+class DocumentUrlResponse(BaseModel):
+    """Short-lived presigned download URL for a stored document."""
+
+    url: str
+    expires_in: int

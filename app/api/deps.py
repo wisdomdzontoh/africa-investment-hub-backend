@@ -62,9 +62,12 @@ async def get_optional_user(
         return None
     try:
         claims = await verify_token(credentials.credentials)
+        user = await user_service.get_or_provision(db, claims)
+        return _ensure_active_user(user)
     except UnauthorizedError:
+        # Invalid token or deactivated account → treat as anonymous; the
+        # response must never be enriched for a suspended/deleted user.
         return None
-    return await user_service.get_or_provision(db, claims)
 
 
 OptionalUser = Annotated[User | None, Depends(get_optional_user)]

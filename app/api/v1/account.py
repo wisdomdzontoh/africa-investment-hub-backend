@@ -2,21 +2,19 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
-
 from fastapi import APIRouter
-
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import CurrentUser, DbDep
+from app.core.clerk_client import delete_user as clerk_delete_user
 from app.core.clerk_client import update_user_public_metadata
 from app.core.exceptions import ConflictError, ForbiddenError, ValidationError
-from app.models.enums import UserRole, UserStatus
+from app.models.enums import UserRole
 from app.models.user import User
 from app.schemas.common import MessageResponse
 from app.schemas.user import AccountRoleSet, LocaleUpdate, UserOut
-from app.services import audit_service
+from app.services import audit_service, user_service
 
 router = APIRouter(tags=["account"])
 
@@ -79,16 +77,20 @@ async def set_locale(payload: LocaleUpdate, db: DbDep, user: CurrentUser) -> Use
 
 @router.delete("/account", response_model=MessageResponse)
 async def delete_account(db: DbDep, user: CurrentUser) -> MessageResponse:
-    """Soft-delete now; a scheduled task hard-deletes after 30 days (PRD §14)."""
-    user.status = UserStatus.suspended
-    user.deleted_at = datetime.now(UTC)
-    await db.flush()
+    """Soft-delete now; a scheduled task hard-deletes after 30 days (PRD §14).
+
+    The Clerk identity is deleted immediately so the account can no longer
+    sign in anywhere. If the Clerk call fails transiently, the nightly
+    reconciliation job re-drives it from ``deleted_at``."""
+    await user_service.soft_delete(db, user)
+    clerk_deleted = await clerk_delete_user(user.clerk_id)
     await audit_service.record(
         db,
         actor_user_id=user.id,
         action="account.deletion_requested",
         target_type="user",
         target_id=user.id,
+        metadata={"clerk_deleted": clerk_deleted},
     )
     return MessageResponse(
         message="Your account has been deactivated and will be permanently deleted in 30 days."

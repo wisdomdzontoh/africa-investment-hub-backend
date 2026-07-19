@@ -17,6 +17,7 @@ from app.core.rate_limit import RateTier, rate_limit
 from app.models.investor import InvestorProfile
 from app.models.user import User
 from app.schemas.common import (
+    DocumentUrlResponse,
     MessageResponse,
     Page,
     PresignUploadRequest,
@@ -128,6 +129,18 @@ async def presign_document(
     return PresignUploadResponse(
         upload_url=url, r2_key=key, expires_in=settings.R2_PRESIGN_EXPIRY_SECONDS
     )
+
+
+@router.get("/me/documents/{r2_key:path}", response_model=DocumentUrlResponse)
+async def download_document(r2_key: str, db: DbDep, user: InvestorUser) -> DocumentUrlResponse:
+    """Short-lived download URL for one of the investor's own documents."""
+    from app.core.config import settings
+
+    profile = await _own_profile(db, user)
+    if not any(d.get("r2_key") == r2_key for d in profile.documents):
+        raise NotFoundError("Document not found.")
+    url = storage.presign_get(r2_key, accessor_id=user.id)
+    return DocumentUrlResponse(url=url, expires_in=settings.R2_PRESIGN_EXPIRY_SECONDS)
 
 
 @router.delete("/me/documents/{r2_key:path}", response_model=MessageResponse)
