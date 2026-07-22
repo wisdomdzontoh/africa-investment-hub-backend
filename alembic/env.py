@@ -65,7 +65,12 @@ async def run_migrations_online() -> None:
         {"sqlalchemy.url": settings.migration_database_url},
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
-        connect_args={"statement_cache_size": 0},
+        connect_args={
+            "statement_cache_size": 0,
+            # Fail loudly instead of hanging a deploy forever when a stale
+            # connection (e.g. from a killed container) still holds a lock.
+            "server_settings": {"lock_timeout": "15s"},
+        },
     )
     async with connectable.connect() as connection:
         await connection.run_sync(_do_run_migrations)
