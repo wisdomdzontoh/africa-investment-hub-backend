@@ -1,9 +1,15 @@
-# Render Blueprint for the African Investment Hub backend:
-#   aih-api    — FastAPI web service (Docker), runs Alembic migrations on boot
-#   aih-worker — ARQ background worker (emails, embeddings, Clerk sync crons)
-#   aih-redis  — managed Key Value (rate limiting, caches, ARQ queue)
-# PostgreSQL lives on Neon (external): the POSTGRES_* values are prompted for
-# in the dashboard when the blueprint is created (sync: false).
+# Render Blueprint for the African Investment Hub backend — $0/month shape:
+#   aih-api   — free web service (Docker): runs Alembic migrations, the ARQ
+#               worker (RUN_WORKER=true), and the API in one container
+#   aih-redis — free managed Key Value (rate limiting, caches, ARQ queue)
+# PostgreSQL lives on Neon (free): paste its connection string as
+# DATABASE_URL when the blueprint prompts for it.
+#
+# Free-tier caveats: the web service spins down after 15 min idle (~50 s cold
+# start) and the bundled worker/crons only run while it is awake. When that
+# stops being acceptable: move aih-api to `plan: starter`, or split the worker
+# into its own `type: worker` service (command:
+# `arq app.workers.worker.WorkerSettings`, RUN_WORKER=false here).
 #
 # Deploy: Render Dashboard → New + → Blueprint → select this repo.
 # Full walkthrough: docs/DEPLOY_RENDER_NEON.md in the project docs.
@@ -20,20 +26,19 @@ services:
     ipAllowList: [] # internal-only access
     maxmemoryPolicy: noeviction # queued ARQ jobs must never be evicted
 
-  # ── FastAPI web service ────────────────────────────────────────────────
+  # ── FastAPI web service (+ bundled ARQ worker) ─────────────────────────
   - type: web
     name: aih-api
     runtime: docker
     region: frankfurt
-    plan: starter # `free` works but spins down after 15 min idle
+    plan: free
     branch: main
     healthCheckPath: /v1/health
-    # Migrations run first (against the direct, non-pooler Neon endpoint via
-    # POSTGRES_DIRECT_HOST), then the API starts. Render injects $PORT.
-    dockerCommand: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+    dockerCommand: sh start.sh
     autoDeploy: true
     envVars:
-      - fromGroup: aih-backend
+      - key: RUN_WORKER
+        value: "true"
       - key: REDIS_HOST
         fromService:
           type: keyvalue
@@ -44,32 +49,6 @@ services:
           type: keyvalue
           name: aih-redis
           property: port
-
-  # ── ARQ background worker ──────────────────────────────────────────────
-  - type: worker
-    name: aih-worker
-    runtime: docker
-    region: frankfurt
-    plan: starter # background workers have no free instance type
-    branch: main
-    dockerCommand: arq app.workers.worker.WorkerSettings
-    autoDeploy: true
-    envVars:
-      - fromGroup: aih-backend
-      - key: REDIS_HOST
-        fromService:
-          type: keyvalue
-          name: aih-redis
-          property: host
-      - key: REDIS_PORT
-        fromService:
-          type: keyvalue
-          name: aih-redis
-          property: port
-
-envVarGroups:
-  - name: aih-backend
-    envVars:
       # ── App ──
       - key: ENVIRONMENT
         value: production
@@ -83,23 +62,11 @@ envVarGroups:
         sync: false # comma-separated, e.g. https://your-app.vercel.app
       - key: SECRET_KEY
         generateValue: true
-      # ── Neon PostgreSQL ──
-      - key: POSTGRES_HOST
-        sync: false # POOLED endpoint: ep-xxx-pooler.<region>.aws.neon.tech
-      - key: POSTGRES_PORT
-        value: "5432"
-      - key: POSTGRES_USER
+      # ── Neon PostgreSQL — one full connection string, used by both the
+      #    app and Alembic. Paste the UNPOOLED string (host without
+      #    "-pooler"); sslmode/channel_binding params are handled.
+      - key: DATABASE_URL
         sync: false
-      - key: POSTGRES_PASSWORD
-        sync: false
-      - key: POSTGRES_DB
-        sync: false
-      - key: POSTGRES_DIRECT_HOST
-        sync: false # DIRECT endpoint (no "-pooler") — used by Alembic DDL
-      - key: POSTGRES_DIRECT_PORT
-        value: "5432"
-      - key: POSTGRES_SSL
-        value: "true"
       - key: DB_POOL_SIZE
         value: "5"
       - key: DB_MAX_OVERFLOW

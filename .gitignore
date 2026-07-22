@@ -22,7 +22,7 @@ coverage.xml
 # Env / secrets
 .env
 .env.*
-!.env.example
+.env.example
 
 # IDE
 .idea/

@@ -4,11 +4,30 @@ from __future__ import annotations
 
 from functools import lru_cache
 from typing import Literal
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from pydantic import Field, PostgresDsn, computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 Environment = Literal["development", "staging", "production"]
+
+
+def _normalize_dsn(raw: str) -> str:
+    """Normalise a standard Postgres URL (e.g. Neon's) for SQLAlchemy+asyncpg.
+
+    - forces the ``postgresql+asyncpg`` driver
+    - translates libpq's ``sslmode=…`` into asyncpg's ``ssl=…``
+    - drops libpq-only params asyncpg rejects (``channel_binding``)
+    """
+    split = urlsplit(raw)
+    params = dict(parse_qsl(split.query))
+    params.pop("channel_binding", None)
+    sslmode = params.pop("sslmode", None)
+    if sslmode and "ssl" not in params:
+        params["ssl"] = sslmode
+    return urlunsplit(
+        ("postgresql+asyncpg", split.netloc, split.path, urlencode(params), "")
+    )
 
 
 class Settings(BaseSettings):
@@ -38,6 +57,11 @@ class Settings(BaseSettings):
     FEATURE_PHASE3: bool = False
 
     # ── Database ───────────────────────────────────────────
+    # Either paste one full connection string (any standard Postgres URL —
+    # Neon's works as-is; SSL params are normalised for asyncpg) and it is
+    # used for BOTH the app and Alembic, or leave it empty and set the
+    # discrete POSTGRES_* parts below.
+    DATABASE_URL: str = ""
     POSTGRES_HOST: str = "localhost"
     POSTGRES_PORT: int = 5432
     POSTGRES_USER: str = "aih"
@@ -138,7 +162,9 @@ class Settings(BaseSettings):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def database_url(self) -> str:
-        """Async DSN used by the app (routes through PgBouncer in prod)."""
+        """Async DSN used by the app."""
+        if self.DATABASE_URL:
+            return _normalize_dsn(self.DATABASE_URL)
         return self._build_dsn(
             self.POSTGRES_HOST, self.POSTGRES_PORT, driver="postgresql+asyncpg"
         )
@@ -146,7 +172,11 @@ class Settings(BaseSettings):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def migration_database_url(self) -> str:
-        """Sync DSN for Alembic; bypasses PgBouncer (DDL needs a direct conn)."""
+        """DSN for Alembic. With discrete parts, POSTGRES_DIRECT_* lets
+        migrations bypass a pooler; with DATABASE_URL both share one DSN
+        (fine — all migrations are transactional, no CONCURRENTLY)."""
+        if self.DATABASE_URL:
+            return _normalize_dsn(self.DATABASE_URL)
         host = self.POSTGRES_DIRECT_HOST or self.POSTGRES_HOST
         port = self.POSTGRES_DIRECT_PORT or self.POSTGRES_PORT
         return self._build_dsn(host, port, driver="postgresql+asyncpg")
